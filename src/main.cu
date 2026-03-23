@@ -19,6 +19,23 @@ __global__ void apply_sigmoid(float *z, float *p, int n)
     p[i] = 1.0f / (1.0f + expf(-z[i]));
 }
 
+/**
+ * LIME model structure with hardcoded default parameters.
+ *
+ * @param D Dimensionality of the model
+ * @param dW Device pointer to model weights
+ * @param bias Model bias term
+ * @return LimeModel struct populated with pointers to GPU memory
+ */
+LimeModel create_lime_model(int D, float *dW, float bias)
+{
+  LimeModel model;
+  model.W = dW;
+  model.bias = bias;
+  model.D = D;
+  return model;
+}
+
 int main(int c, char **v)
 {
   int D = 128, B = 16384;
@@ -27,6 +44,9 @@ int main(int c, char **v)
   const char *rx = nullptr;
   const char *wx = nullptr;
   const char *wz = nullptr;
+  const char *out_preds = nullptr;
+  const char *out_weights = nullptr;
+  
   for (int i = 1; i < c; ++i)
   {
     if (!strncmp(v[i], "--D=", 4))
@@ -39,8 +59,13 @@ int main(int c, char **v)
       wx = v[++i];
     else if (!strcmp(v[i], "--write-zprime"))
       wz = v[++i];
+    else if (!strcmp(v[i], "--write-preds"))
+      out_preds = v[++i];
+    else if (!strcmp(v[i], "--write-weights"))
+      out_weights = v[++i];
   }
 
+  // Initialize default model parameters 
   std::vector<float> hx0(D), hm(D), hW(D);
   for (int i = 0; i < D; ++i)
   {
@@ -49,9 +74,12 @@ int main(int c, char **v)
     hW[i] = 0.02f * (i + 1);
   }
   float hb = -1.0f;
+  
   float *dx0, *dm, *dW, *dX, *dlog, *dp, *dd, *dw;
   unsigned char *dz;
   curandStatePhilox4_32_10_t *ds;
+  LimeModel *dmodel;  // Device-side model structure
+  
   CUDA_CALL(cudaMalloc(&dx0, D * 4));
   CUDA_CALL(cudaMalloc(&dm, D * 4));
   CUDA_CALL(cudaMalloc(&dW, D * 4));
@@ -62,9 +90,15 @@ int main(int c, char **v)
   CUDA_CALL(cudaMalloc(&dd, B * 4));
   CUDA_CALL(cudaMalloc(&dw, B * 4));
   CUDA_CALL(cudaMalloc(&ds, B * sizeof(curandStatePhilox4_32_10_t)));
+  CUDA_CALL(cudaMalloc(&dmodel, sizeof(LimeModel)));
+  
   CUDA_CALL(cudaMemcpy(dx0, hx0.data(), D * 4, cudaMemcpyHostToDevice));
   CUDA_CALL(cudaMemcpy(dm, hm.data(), D * 4, cudaMemcpyHostToDevice));
   CUDA_CALL(cudaMemcpy(dW, hW.data(), D * 4, cudaMemcpyHostToDevice));
+
+  // Create and copy the model to device
+  LimeModel h_model = create_lime_model(D, dW, hb);
+  CUDA_CALL(cudaMemcpy(dmodel, &h_model, sizeof(LimeModel), cudaMemcpyHostToDevice));
 
   cublasHandle_t h;
   cublasCreate(&h);
@@ -73,7 +107,7 @@ int main(int c, char **v)
   cudaEventCreate(&t1);
   float g = 0, gi = 0, gp = 0, gio = 0, i = 0, w = 0;
 
-  // Generate
+  // ========== Stage 1: Generate / Read perturbations ==========
   CUDA_CALL(cudaEventRecord(t0));
   if (rx)
   {
@@ -123,10 +157,7 @@ int main(int c, char **v)
     }
   }
 
-  // Inference via cuBLAS
-  // X is row-major B×D: in memory X[samp*D+feat].
-  // cuBLAS is column-major, so treat the flat array as a D×B column-major matrix
-  // (lda=D), then use CUBLAS_OP_T to compute (A^T)*W = X*W with result length B.
+  // ========== Stage 2: Inference with generalized model ==========
   CUDA_CALL(cudaEventRecord(t0));
   const float a = 1.0f, b = 0.0f;
   cublasSgemv(h, CUBLAS_OP_T, D, B, &a, dX, D, dW, 1, &b, dlog, 1);
@@ -136,7 +167,7 @@ int main(int c, char **v)
   CUDA_CALL(cudaEventSynchronize(t1));
   cudaEventElapsedTime(&i, t0, t1);
 
-  // Weights
+  // ========== Stage 3: Compute distances and weights ==========
   CUDA_CALL(cudaEventRecord(t0));
   distances_and_weights<<<(B + 255) / 256, 256>>>(dX, dx0, dd, dw, B, D, kw);
   CUDA_CALL(cudaEventRecord(t1));
@@ -155,12 +186,19 @@ int main(int c, char **v)
   printf("Timing detail (ms): gen_init %.3f perturb %.3f read_x_io %.3f\n", gi, gp, gio);
   printf("Timing (ms): gen %.3f infer %.3f weights %.3f total %.3f\n", g, i, w, g + i + w);
   printf("Means: preds %.5f weights %.5f\n", mpred / B, mwei / B);
-  FILE *f1 = fopen("preds.bin", "wb");
+  
+  // Output results
+  const char *preds_file = out_preds ? out_preds : "preds.bin";
+  const char *weights_file = out_weights ? out_weights : "weights.bin";
+  
+  FILE *f1 = fopen(preds_file, "wb");
   fwrite(hp.data(), 4, B, f1);
   fclose(f1);
-  FILE *f2 = fopen("weights.bin", "wb");
+  FILE *f2 = fopen(weights_file, "wb");
   fwrite(hw.data(), 4, B, f2);
   fclose(f2);
+  
+  // Cleanup
   cublasDestroy(h);
   cudaFree(dx0);
   cudaFree(dm);
@@ -172,4 +210,7 @@ int main(int c, char **v)
   cudaFree(dd);
   cudaFree(dw);
   cudaFree(ds);
+  cudaFree(dmodel);
+  
+  return 0;
 }

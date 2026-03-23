@@ -15,7 +15,7 @@ set CSV=%BUILD%\timings_m1.csv
 
 REM --- Configuration ---
 set D_VALUES=128 256 512
-set B_VALUES=512 1024 2048 4096 8192 16384
+set B_VALUES=32768 65536 131072
 set REPEATS=6
 
 REM Clean old timing files
@@ -29,7 +29,9 @@ for %%D in (%D_VALUES%) do (
     for %%B in (%B_VALUES%) do (
         for /l %%R in (1,1,%REPEATS%) do (
             echo [GPU] D=%%D B=%%B run=%%R/%REPEATS% ...
+            cd /d "%BUILD%"
             "%EXE%" --D=%%D --B=%%B > "%BUILD%\_tmp_gpu.txt" 2>&1
+            cd /d "%ROOT%"
             REM Parse timing line and append with D,B,run prefix
             for /f "tokens=*" %%L in ('findstr /B "Timing" "%BUILD%\_tmp_gpu.txt"') do (
                 echo D=%%D B=%%B run=%%R %%L >> "%GPU_TXT%"
@@ -63,10 +65,16 @@ echo  Step 4: Validate (D=128, B=1024)
 echo ========================================
 set XVAL=%BUILD%\X_D128_B1024.bin
 set ZVAL=%BUILD%\zprime_D128_B1024.bin
+set PVAL=%BUILD%\preds_D128_B1024.bin
+set WVAL=%BUILD%\weights_D128_B1024.bin
+
 echo Running GPU for validation ...
-"%EXE%" --D=128 --B=1024 --write-X "%XVAL%" --write-zprime "%ZVAL%"
+cd /d "%BUILD%"
+"%EXE%" --D=128 --B=1024 --write-X "%XVAL%" --write-zprime "%ZVAL%" --write-preds "%PVAL%" --write-weights "%WVAL%"
+cd /d "%ROOT%"
+
 echo Running comparison ...
-python "%ROOT%scripts\compare_and_validate.py" --X "%XVAL%" --zprime "%ZVAL%" --B 1024 --D 128 --preds preds.bin --weights weights.bin --tol_abs 1e-3 --tol_rel 1e-2
+python "%ROOT%scripts\compare_and_validate.py" --X "%XVAL%" --zprime "%ZVAL%" --B 1024 --D 128 --preds "%PVAL%" --weights "%WVAL%" --tol_abs 1e-3 --tol_rel 1e-2
 
 echo ========================================
 echo  Step 5: Generate plots

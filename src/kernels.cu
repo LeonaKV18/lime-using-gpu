@@ -47,3 +47,21 @@ __global__ void distances_and_weights(const float *X, const float *x0, float *di
     dist[i] = s2;
     w[i] = expf(-s2 / (kw * kw));
 }
+
+__global__ void infer_with_model(const float *X, const LimeModel *model, float *pred, int B)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= B)
+        return;
+
+    // Compute X[i] @ W + bias
+    float logit = model->bias;
+    int row_start = i * model->D;
+    for (int j = 0; j < model->D; ++j)
+    {
+        logit += X[row_start + j] * model->W[j];
+    }
+
+    // Apply sigmoid
+    pred[i] = 1.0f / (1.0f + expf(-logit));
+}
