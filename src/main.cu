@@ -1,4 +1,5 @@
 #include <cstdio>
+#include <cstring>
 #include <vector>
 #include <cublas_v2.h>
 #include "kernels.h"
@@ -25,6 +26,7 @@ int main(int c, char **v)
   unsigned long seed = 1234;
   const char *rx = nullptr;
   const char *wx = nullptr;
+  const char *wz = nullptr;
   for (int i = 1; i < c; ++i)
   {
     if (!strncmp(v[i], "--D=", 4))
@@ -35,6 +37,8 @@ int main(int c, char **v)
       rx = v[++i];
     else if (!strcmp(v[i], "--write-X"))
       wx = v[++i];
+    else if (!strcmp(v[i], "--write-zprime"))
+      wz = v[++i];
   }
 
   std::vector<float> hx0(D), hm(D), hW(D);
@@ -46,11 +50,13 @@ int main(int c, char **v)
   }
   float hb = -1.0f;
   float *dx0, *dm, *dW, *dX, *dlog, *dp, *dd, *dw;
+  unsigned char *dz;
   curandStatePhilox4_32_10_t *ds;
   CUDA_CALL(cudaMalloc(&dx0, D * 4));
   CUDA_CALL(cudaMalloc(&dm, D * 4));
   CUDA_CALL(cudaMalloc(&dW, D * 4));
   CUDA_CALL(cudaMalloc(&dX, (size_t)B * D * 4));
+  CUDA_CALL(cudaMalloc(&dz, (size_t)B * D));
   CUDA_CALL(cudaMalloc(&dlog, B * 4));
   CUDA_CALL(cudaMalloc(&dp, B * 4));
   CUDA_CALL(cudaMalloc(&dd, B * 4));
@@ -65,22 +71,40 @@ int main(int c, char **v)
   cudaEvent_t t0, t1;
   cudaEventCreate(&t0);
   cudaEventCreate(&t1);
-  float g = 0, i = 0, w = 0;
+  float g = 0, gi = 0, gp = 0, gio = 0, i = 0, w = 0;
 
   // Generate
   CUDA_CALL(cudaEventRecord(t0));
   if (rx)
   {
+    CUDA_CALL(cudaEventRecord(t0));
     FILE *f = fopen(rx, "rb");
     std::vector<float> X(B * D);
     fread(X.data(), 4, B * D, f);
     fclose(f);
     CUDA_CALL(cudaMemcpy(dX, X.data(), B * D * 4, cudaMemcpyHostToDevice));
+    CUDA_CALL(cudaEventRecord(t1));
+    CUDA_CALL(cudaEventSynchronize(t1));
+    cudaEventElapsedTime(&gio, t0, t1);
+    g = gio;
+    if (wz)
+      printf("Warning: --write-zprime requested with --read-X. zprime is only available when perturbations are generated in this run.\n");
   }
   else
   {
+    CUDA_CALL(cudaEventRecord(t0));
     init_curand<<<(B + 127) / 128, 128>>>(ds, seed, B);
-    generate_perturbations<<<B, min(D, 1024)>>>(dx0, dm, ds, dX, B, D, mp, ns);
+    CUDA_CALL(cudaEventRecord(t1));
+    CUDA_CALL(cudaEventSynchronize(t1));
+    cudaEventElapsedTime(&gi, t0, t1);
+
+    CUDA_CALL(cudaEventRecord(t0));
+    generate_perturbations<<<B, min(D, 1024)>>>(dx0, dm, ds, dX, dz, B, D, mp, ns);
+    CUDA_CALL(cudaEventRecord(t1));
+    CUDA_CALL(cudaEventSynchronize(t1));
+    cudaEventElapsedTime(&gp, t0, t1);
+    g = gi + gp;
+
     if (wx)
     {
       std::vector<float> X(B * D);
@@ -89,10 +113,15 @@ int main(int c, char **v)
       fwrite(X.data(), 4, B * D, f);
       fclose(f);
     }
+    if (wz)
+    {
+      std::vector<unsigned char> Z((size_t)B * D);
+      CUDA_CALL(cudaMemcpy(Z.data(), dz, (size_t)B * D, cudaMemcpyDeviceToHost));
+      FILE *f = fopen(wz, "wb");
+      fwrite(Z.data(), 1, (size_t)B * D, f);
+      fclose(f);
+    }
   }
-  CUDA_CALL(cudaEventRecord(t1));
-  CUDA_CALL(cudaEventSynchronize(t1));
-  cudaEventElapsedTime(&g, t0, t1);
 
   // Inference via cuBLAS
   // X is row-major B×D: in memory X[samp*D+feat].
@@ -123,6 +152,7 @@ int main(int c, char **v)
     mpred += hp[k];
     mwei += hw[k];
   }
+  printf("Timing detail (ms): gen_init %.3f perturb %.3f read_x_io %.3f\n", gi, gp, gio);
   printf("Timing (ms): gen %.3f infer %.3f weights %.3f total %.3f\n", g, i, w, g + i + w);
   printf("Means: preds %.5f weights %.5f\n", mpred / B, mwei / B);
   FILE *f1 = fopen("preds.bin", "wb");
@@ -136,6 +166,7 @@ int main(int c, char **v)
   cudaFree(dm);
   cudaFree(dW);
   cudaFree(dX);
+  cudaFree(dz);
   cudaFree(dlog);
   cudaFree(dp);
   cudaFree(dd);

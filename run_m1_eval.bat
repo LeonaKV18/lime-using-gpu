@@ -23,25 +23,13 @@ if exist "%GPU_TXT%" del "%GPU_TXT%"
 if exist "%CPU_TXT%" del "%CPU_TXT%"
 
 echo ========================================
-echo  Step 1: Generate X.bin files
+echo  Step 1: Run GPU sweeps (full pipeline)
 echo ========================================
 for %%D in (%D_VALUES%) do (
     for %%B in (%B_VALUES%) do (
-        set XBIN=%BUILD%\X_D%%D_B%%B.bin
-        echo Generating X D=%%D B=%%B ...
-        python "%ROOT%scripts\generate_X_bin.py" --D %%D --B %%B --out "!XBIN!"
-    )
-)
-
-echo ========================================
-echo  Step 2: Run GPU sweeps
-echo ========================================
-for %%D in (%D_VALUES%) do (
-    for %%B in (%B_VALUES%) do (
-        set XBIN=%BUILD%\X_D%%D_B%%B.bin
         for /l %%R in (1,1,%REPEATS%) do (
             echo [GPU] D=%%D B=%%B run=%%R/%REPEATS% ...
-            "%EXE%" --read-X "!XBIN!" --D=%%D --B=%%B > "%BUILD%\_tmp_gpu.txt" 2>&1
+            "%EXE%" --D=%%D --B=%%B > "%BUILD%\_tmp_gpu.txt" 2>&1
             REM Parse timing line and append with D,B,run prefix
             for /f "tokens=*" %%L in ('findstr /B "Timing" "%BUILD%\_tmp_gpu.txt"') do (
                 echo D=%%D B=%%B run=%%R %%L >> "%GPU_TXT%"
@@ -51,14 +39,13 @@ for %%D in (%D_VALUES%) do (
 )
 
 echo ========================================
-echo  Step 3: Run CPU sweeps
+echo  Step 2: Run CPU sweeps (full pipeline)
 echo ========================================
 for %%D in (%D_VALUES%) do (
     for %%B in (%B_VALUES%) do (
-        set XBIN=%BUILD%\X_D%%D_B%%B.bin
         for /l %%R in (1,1,%REPEATS%) do (
             echo [CPU] D=%%D B=%%B run=%%R/%REPEATS% ...
-            python "%ROOT%scripts\cpu_reference.py" --X "!XBIN!" --B %%B --D %%D --out "%BUILD%\cpu_D%%D_B%%B.npz" > "%BUILD%\_tmp_cpu.txt" 2>&1
+            python "%ROOT%scripts\cpu_reference.py" --B %%B --D %%D > "%BUILD%\_tmp_cpu.txt" 2>&1
             for /f "tokens=*" %%L in ('findstr /B "Timing" "%BUILD%\_tmp_cpu.txt"') do (
                 echo D=%%D B=%%B run=%%R %%L >> "%CPU_TXT%"
             )
@@ -67,25 +54,22 @@ for %%D in (%D_VALUES%) do (
 )
 
 echo ========================================
-echo  Step 4: Convert timings to CSV
+echo  Step 3: Convert timings to CSV
 echo ========================================
 python "%ROOT%scripts\convert_timings_sweep.py" --gpu "%GPU_TXT%" --cpu "%CPU_TXT%" --drop-first 1 --out "%CSV%"
 
 echo ========================================
-echo  Step 5: Validate (D=128, B=1024)
+echo  Step 4: Validate (D=128, B=1024)
 echo ========================================
 set XVAL=%BUILD%\X_D128_B1024.bin
-if exist "%XVAL%" (
-    echo Running GPU for validation ...
-    "%EXE%" --read-X "%XVAL%" --D=128 --B=1024
-    echo Running comparison ...
-    python "%ROOT%scripts\compare_and_validate.py" --X "%XVAL%" --B 1024 --D 128 --preds preds.bin --weights weights.bin --tol_abs 1e-3 --tol_rel 1e-2
-) else (
-    echo WARNING: %XVAL% not found, skipping validation.
-)
+set ZVAL=%BUILD%\zprime_D128_B1024.bin
+echo Running GPU for validation ...
+"%EXE%" --D=128 --B=1024 --write-X "%XVAL%" --write-zprime "%ZVAL%"
+echo Running comparison ...
+python "%ROOT%scripts\compare_and_validate.py" --X "%XVAL%" --zprime "%ZVAL%" --B 1024 --D 128 --preds preds.bin --weights weights.bin --tol_abs 1e-3 --tol_rel 1e-2
 
 echo ========================================
-echo  Step 6: Generate plots
+echo  Step 5: Generate plots
 echo ========================================
 python "%ROOT%scripts\plot_results.py" --csv "%CSV%" --out "%ROOT%plots"
 

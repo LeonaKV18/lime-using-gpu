@@ -1,0 +1,26 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 18,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "vs2022-cuda",
+      "displayName": "VS 2022 CUDA",
+      "description": "Known-working generator for CUDA build on this machine",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/build/vs2022"
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "vs2022-cuda-release",
+      "displayName": "Build VS 2022 CUDA Release",
+      "configurePreset": "vs2022-cuda",
+      "configuration": "Release"
+    }
+  ]
+}

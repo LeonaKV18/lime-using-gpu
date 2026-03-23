@@ -33,7 +33,7 @@ GPU_RE = re.compile(
 
 # Matches:  D=128 B=4096 CPU Timing (ms): gen 12.3  infer 4.5  weights 3.2  total 20.0
 CPU_RE = re.compile(
-    r'D=(\d+)\s+B=(\d+)\s+CPU Timing \(ms\):\s+gen\s+([\d.]+)\s+infer\s+([\d.]+)\s+weights\s+([\d.]+)\s+total\s+([\d.]+)'
+    r'D=(\d+)\s+B=(\d+)\s+(?:CPU\s+)?Timing \(ms\):\s+gen\s+([\d.]+)\s+infer\s+([\d.]+)\s+weights\s+([\d.]+)\s+total\s+([\d.]+)'
 )
 
 # Also handle the bare format from main.cu printf (no D= B= prefix):
@@ -42,7 +42,7 @@ BARE_GPU_RE = re.compile(
     r'Timing \(ms\):\s+gen\s+([\d.]+)\s+infer\s+([\d.]+)\s+weights\s+([\d.]+)\s+total\s+([\d.]+)'
 )
 BARE_CPU_RE = re.compile(
-    r'CPU Timing \(ms\):\s+gen\s+([\d.]+)\s+infer\s+([\d.]+)\s+weights\s+([\d.]+)\s+total\s+([\d.]+)'
+    r'(?:CPU\s+)?Timing \(ms\):\s+gen\s+([\d.]+)\s+infer\s+([\d.]+)\s+weights\s+([\d.]+)\s+total\s+([\d.]+)'
 )
 
 # D/B tag that might precede a bare line: "D=128 B=4096"
@@ -51,19 +51,32 @@ DB_TAG_RE = re.compile(r'D=(\d+)\s+B=(\d+)')
 
 # ── Parsers ───────────────────────────────────────────────────────────────────
 
-def parse_file(path, kind='gpu'):
+def _aggregate_runs(values, drop_first):
+    if not values:
+        return None
+    trimmed = values[drop_first:] if drop_first > 0 and len(values) > drop_first else values
+    n = float(len(trimmed))
+    return {
+        'gen': sum(v['gen'] for v in trimmed) / n,
+        'infer': sum(v['infer'] for v in trimmed) / n,
+        'weights': sum(v['weights'] for v in trimmed) / n,
+        'total': sum(v['total'] for v in trimmed) / n,
+    }
+
+
+def parse_file(path, kind='gpu', drop_first=0):
     """
     Parse a log file and return a dict keyed by (D, B) with timing values.
     kind: 'gpu' or 'cpu'
     """
-    results = {}
+    by_key = defaultdict(list)
     current_D = current_B = None
 
     try:
         lines = open(path).readlines()
     except FileNotFoundError:
         print(f"[WARN] File not found: {path} — skipping")
-        return results
+        return {}
 
     for line in lines:
         line = line.strip()
@@ -73,19 +86,19 @@ def parse_file(path, kind='gpu'):
             m = GPU_RE.search(line)
             if m:
                 D, B = int(m.group(1)), int(m.group(2))
-                results[(D, B)] = {
+                by_key[(D, B)].append({
                     'gen': float(m.group(3)), 'infer': float(m.group(4)),
                     'weights': float(m.group(5)), 'total': float(m.group(6))
-                }
+                })
                 continue
         else:
             m = CPU_RE.search(line)
             if m:
                 D, B = int(m.group(1)), int(m.group(2))
-                results[(D, B)] = {
+                by_key[(D, B)].append({
                     'gen': float(m.group(3)), 'infer': float(m.group(4)),
                     'weights': float(m.group(5)), 'total': float(m.group(6))
-                }
+                })
                 continue
 
         # Check for D= B= tag to associate with next bare line
@@ -100,11 +113,16 @@ def parse_file(path, kind='gpu'):
             m = BARE_CPU_RE.search(line)
 
         if m and current_D is not None and current_B is not None:
-            results[(current_D, current_B)] = {
+            by_key[(current_D, current_B)].append({
                 'gen': float(m.group(1)), 'infer': float(m.group(2)),
                 'weights': float(m.group(3)), 'total': float(m.group(4))
-            }
+            })
 
+    results = {}
+    for key, values in by_key.items():
+        agg = _aggregate_runs(values, drop_first)
+        if agg is not None:
+            results[key] = agg
     return results
 
 
@@ -203,6 +221,8 @@ def main():
                         help="CPU timing log file")
     parser.add_argument("--combined", type=str, default=None,
                         help="Single file with both GPU and CPU lines (overrides --gpu/--cpu)")
+    parser.add_argument("--drop-first", type=int, default=0,
+                        help="Drop first N runs per (D,B) before averaging")
     parser.add_argument("--out",      type=str, default="timings.csv",
                         help="Output CSV path")
     args = parser.parse_args()
@@ -212,9 +232,9 @@ def main():
         gpu, cpu = parse_combined(args.combined)
     else:
         print(f"Parsing GPU log: {args.gpu}")
-        gpu = parse_file(args.gpu, kind='gpu')
+        gpu = parse_file(args.gpu, kind='gpu', drop_first=max(0, args.drop_first))
         print(f"Parsing CPU log: {args.cpu}")
-        cpu = parse_file(args.cpu, kind='cpu')
+        cpu = parse_file(args.cpu, kind='cpu', drop_first=max(0, args.drop_first))
 
     print(f"Found {len(gpu)} GPU entries, {len(cpu)} CPU entries")
     write_csv(gpu, cpu, args.out)

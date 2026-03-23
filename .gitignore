@@ -1,0 +1,6 @@
+# Local build trees and generated artifacts
+/build/
+
+# Local runtime outputs
+/preds.bin
+/weights.bin

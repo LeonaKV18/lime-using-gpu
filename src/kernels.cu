@@ -8,7 +8,7 @@ __global__ void init_curand(curandStatePhilox4_32_10_t *s, unsigned long seed, i
         curand_init(seed, i, 0, &s[i]);
 }
 
-__global__ void generate_perturbations(const float *x0, const float *means, curandStatePhilox4_32_10_t *s, float *X, int B, int D, float mp, float ns)
+__global__ void generate_perturbations(const float *x0, const float *means, curandStatePhilox4_32_10_t *s, float *X, unsigned char *zprime, int B, int D, float mp, float ns)
 {
     int samp = blockIdx.x, feat = threadIdx.x;
     if (samp >= B || feat >= D)
@@ -16,11 +16,19 @@ __global__ void generate_perturbations(const float *x0, const float *means, cura
     int idx = samp * D + feat;
     curandStatePhilox4_32_10_t st = s[samp];
     float u = curand_uniform(&st), v;
+    unsigned char z;
     if (u < mp)
+    {
         v = means[feat];
+        z = 0;
+    }
     else
+    {
         v = x0[feat] + ns * curand_normal(&st);
+        z = 1;
+    }
     X[idx] = v;
+    zprime[idx] = z;
     s[samp] = st;
 }
 
