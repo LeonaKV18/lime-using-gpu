@@ -41,11 +41,15 @@ def _load_cpu_ref():
 
 ref = _load_cpu_ref()
 
+def _model_D(model_path):
+    """Reads D from a model .npz file produced by train_model.py."""
+    data = np.load(model_path, allow_pickle=True)
+    return int(len(data["W"]))
 
 # ── Validation logic ─────────────────────────────────────────────────────────
 
 def validate(D, B, X_path, preds_path, weights_path,
-             zprime_path=None, tol_abs=1e-4, tol_rel=1e-3):
+             zprime_path=None, tol_abs=1e-4, tol_rel=1e-3, model_path=None):
 
     print(f"\n{'='*60}")
     print(f"  Validating  D={D}  B={B}")
@@ -81,7 +85,7 @@ def validate(D, B, X_path, preds_path, weights_path,
         sys.exit(1)
 
     # 3. Run CPU on the exact same X
-    x0, _, W, bias = ref.make_params(D)
+    x0, _, W, bias = ref.make_params(D, model_path=model_path)
     preds_cpu         = ref.cpu_infer(X_gpu, W, bias)
     _, weights_cpu    = ref.cpu_distances_and_weights(X_gpu, x0)
 
@@ -111,7 +115,7 @@ def validate(D, B, X_path, preds_path, weights_path,
 
     ok_z = True
     if zprime_gpu is not None:
-        _, means, _, _ = ref.make_params(D)
+        _, means, _, _ = ref.make_params(D, model_path=model_path)
         z_from_x = np.where(np.isclose(X_gpu, means[np.newaxis, :], atol=1e-7), 0, 1).astype(np.uint8)
         bad_values = np.count_nonzero((zprime_gpu != 0) & (zprime_gpu != 1))
         mismatches = np.count_nonzero(zprime_gpu != z_from_x)
@@ -159,6 +163,7 @@ def main():
     parser.add_argument("--tol",     type=float, default=None,         help="Legacy absolute tolerance (sets rel=0)")
     parser.add_argument("--tol_abs", type=float, default=1e-4,         help="Absolute tolerance")
     parser.add_argument("--tol_rel", type=float, default=1e-3,         help="Relative tolerance")
+    parser.add_argument("--model",   type=str,   default=None,         help="Model .npz from train_model.py; infers D automatically")
     args = parser.parse_args()
 
     tol_abs = args.tol_abs
@@ -167,8 +172,12 @@ def main():
         tol_abs = args.tol
         tol_rel = 0.0
 
+    D = args.D
+    if args.model:
+        D = _model_D(args.model)
+
     validate(
-        D=args.D,
+        D=D,
         B=args.B,
         X_path=args.X,
         preds_path=args.preds,
@@ -176,8 +185,8 @@ def main():
         zprime_path=args.zprime,
         tol_abs=tol_abs,
         tol_rel=tol_rel,
-    )
-
+        model_path=args.model,
+    )    
 
 if __name__ == "__main__":
     main()

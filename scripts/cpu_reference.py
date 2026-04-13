@@ -19,15 +19,26 @@ import numpy as np
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
+def load_model_npz(path):
+    """
+    Loads model parameters exported by train_model.py.
+    Returns (x0, means, W, bias) all as float32.
+    """
+    data = np.load(path, allow_pickle=True)
+    x0    = data["x0"].astype(np.float32)
+    means = data["means"].astype(np.float32)
+    W     = data["W"].astype(np.float32)
+    bias  = np.float32(data["bias"])
+    return x0, means, W, bias
 
-def make_params(D):
+def make_params(D, model_path=None):
     """
-    Reproduce the deterministic arrays hard-coded in main.cu.
-      x0[i]    = 1.0 if i%5==0 else 0.5
-      means[i] = 0.5
-      W[i]     = 0.02 * (i+1)
-      bias     = -1.0
+    Returns (x0, means, W, bias) for the given configuration.
+    When model_path is provided the values come from a trained model;
+    otherwise a synthetic fallback is used for benchmarking.
     """
+    if model_path is not None:
+        return load_model_npz(model_path)
     x0    = np.array([1.0 if i % 5 == 0 else 0.5 for i in range(D)], dtype=np.float32)
     means = np.full(D, 0.5, dtype=np.float32)
     W     = np.array([0.02 * (i + 1) for i in range(D)], dtype=np.float32)
@@ -93,12 +104,13 @@ def cpu_distances_and_weights(X, x0, kw=1.0):
 
 # ── Full pipeline ─────────────────────────────────────────────────────────────
 
-def run_pipeline(D, B, mask_prob=0.2, noise_std=0.1, kw=1.0, X_in=None):
+def run_pipeline(D, B, mask_prob=0.2, noise_std=0.1, kw=1.0, X_in=None, model_path=None):
     """
     Run all three stages and print timings + summary statistics.
     If X_in is provided, skip generation (useful for validation against GPU).
     """
-    x0, means, W, bias = make_params(D)
+    x0, means, W, bias = make_params(D, model_path=model_path)
+    D = len(W)
 
     # Stage 1
     t0 = time.perf_counter()
@@ -136,7 +148,13 @@ def main():
     parser.add_argument("--read-X",  type=str,   default=None,  help="Load X from this .bin file")
     parser.add_argument("--out-preds",   type=str, default=None, help="Save preds to .bin")
     parser.add_argument("--out-weights", type=str, default=None, help="Save weights to .bin")
+    parser.add_argument("--model",       type=str,   default=None,  help="Model .npz from train_model.py")
     args = parser.parse_args()
+
+    D = args.D
+    if args.model:
+        _md = np.load(args.model, allow_pickle=True)
+        D   = int(len(_md["W"]))
 
     # Optionally load a pre-generated X (e.g. the one the GPU used)
     X_in = None
@@ -145,7 +163,7 @@ def main():
         print(f"Loaded X from {args.read_X}  shape={X_in.shape}")
 
     print(f"Running CPU reference  D={args.D}  B={args.B}")
-    preds, weights, _ = run_pipeline(args.D, args.B, args.mask, args.ns, args.kw, X_in)
+    preds, weights, _ = run_pipeline(D, args.B, args.mask, args.ns, args.kw, X_in, model_path=args.model)
 
     if args.out_preds:
         preds.tofile(args.out_preds)

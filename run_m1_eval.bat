@@ -18,6 +18,12 @@ set D_VALUES=128 256 512
 set B_VALUES=32768 65536 131072
 set REPEATS=6
 
+REM --- Train model for validation if not already present ---
+if not exist "%ROOT%models\breast_cancer.bin" (
+    echo Training logistic regression model on breast_cancer...
+    python "%ROOT%scripts\train_model.py" --dataset=breast_cancer --out-dir="%ROOT%models"
+)
+
 REM Clean old timing files
 if exist "%GPU_TXT%" del "%GPU_TXT%"
 if exist "%CPU_TXT%" del "%CPU_TXT%"
@@ -70,11 +76,11 @@ set WVAL=%BUILD%\weights_D128_B1024.bin
 
 echo Running GPU for validation ...
 cd /d "%BUILD%"
-"%EXE%" --D=128 --B=1024 --write-X "%XVAL%" --write-zprime "%ZVAL%" --write-preds "%PVAL%" --write-weights "%WVAL%"
+"%EXE%" --B=1024 --model="%ROOT%models\breast_cancer.bin" --write-X "%XVAL%" --write-zprime "%ZVAL%" --write-preds "%PVAL%" --write-weights "%WVAL%"
 cd /d "%ROOT%"
 
 echo Running comparison ...
-python "%ROOT%scripts\compare_and_validate.py" --X "%XVAL%" --zprime "%ZVAL%" --B 1024 --D 128 --preds "%PVAL%" --weights "%WVAL%" --tol_abs 1e-3 --tol_rel 1e-2
+python "%ROOT%scripts\compare_and_validate.py" --X "%XVAL%" --zprime "%ZVAL%" --B 1024 --model "%ROOT%models\breast_cancer.npz" --preds "%PVAL%" --weights "%WVAL%" --tol_abs 1e-3 --tol_rel 1e-2
 
 echo ========================================
 echo  Step 5: Generate plots

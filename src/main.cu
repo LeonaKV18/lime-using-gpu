@@ -5,6 +5,29 @@
 #include "kernels.h"
 #include "utils.h"
 
+// Reads model parameters written by train_model.py.
+// Binary layout: [int32 D][float32*D W][float32 bias][float32*D x0][float32*D means]
+// On success D is updated to the value stored in the file.
+static bool load_model_bin(
+    const char *path, int &D,
+    std::vector<float> &W, float &bias,
+    std::vector<float> &x0, std::vector<float> &means)
+{
+    FILE *f = fopen(path, "rb");
+    if (!f) { fprintf(stderr, "[ERROR] Cannot open model file: %s\n", path); return false; }
+
+    int file_D = 0;
+    if (fread(&file_D, sizeof(int), 1, f) != 1)           { fclose(f); return false; }
+    D = file_D;
+    W.resize(D); x0.resize(D); means.resize(D);
+    if (fread(W.data(),     sizeof(float), D, f) != (size_t)D) { fclose(f); return false; }
+    if (fread(&bias,        sizeof(float), 1, f) != 1)         { fclose(f); return false; }
+    if (fread(x0.data(),    sizeof(float), D, f) != (size_t)D) { fclose(f); return false; }
+    if (fread(means.data(), sizeof(float), D, f) != (size_t)D) { fclose(f); return false; }
+    fclose(f);
+    return true;
+}
+
 LimeModel create_lime_model(int D, float *dW, float bias)
 {
     LimeModel m; m.W = dW; m.bias = bias; m.D = D;
@@ -28,6 +51,7 @@ int main(int c, char **v)
     const char *wz          = nullptr;
     const char *out_preds   = nullptr;
     const char *out_weights = nullptr;
+    const char *model_path  = nullptr;
 
     for (int i = 1; i < c; ++i)
     {
@@ -42,21 +66,39 @@ int main(int c, char **v)
         else if (!strcmp(v[i], "--write-zprime"))          wz          = v[++i];
         else if (!strcmp(v[i], "--write-preds"))           out_preds   = v[++i];
         else if (!strcmp(v[i], "--write-weights"))         out_weights = v[++i];
+        else if (!strncmp(v[i], "--model=", 8))            model_path  = v[i] + 8;
+    }
+
+    std::vector<float> hx0, hm, hW;
+    float hb = 0.0f;
+
+    if (model_path)
+    {
+        // D is overridden by the value embedded in the model file.
+        if (!load_model_bin(model_path, D, hW, hb, hx0, hm))
+        {
+            fprintf(stderr, "[ERROR] Failed to load model from %s\n", model_path);
+            return 1;
+        }
+        printf("Loaded model from %s  D=%d\n", model_path, D);
+    }
+    else
+    {
+        // Synthetic fallback used for performance benchmarking where D is swept freely.
+        hx0.resize(D); hm.resize(D); hW.resize(D);
+        for (int i = 0; i < D; ++i)
+        {
+            hx0[i] = (i % 5 == 0) ? 1.0f : 0.5f;
+            hm[i]  = 0.5f;
+            hW[i]  = 0.02f * (i + 1);
+        }
+        hb = -1.0f;
     }
 
     printf("Config: D=%d  B=%d  perturb=%s  infer=%s\n",
            D, B,
            use_per_feature ? "per-feature" : "per-sample",
            use_cublas      ? "cublas"       : "custom");
-
-    std::vector<float> hx0(D), hm(D), hW(D);
-    for (int i = 0; i < D; ++i)
-    {
-        hx0[i] = (i % 5 == 0) ? 1.0f : 0.5f;
-        hm[i]  = 0.5f;
-        hW[i]  = 0.02f * (i + 1);
-    }
-    float hb = -1.0f;
 
     float *dx0, *dm, *dW, *dX, *dlog, *dp, *dd, *dw;
     unsigned char *dz;
@@ -85,7 +127,7 @@ int main(int c, char **v)
     cublasHandle_t cbh;
     cublasCreate(&cbh);
 
-    // cuBLAS warmup
+    // cuBLAS warmup to exclude initialization overhead from timed runs
     {
         const float a = 1.0f, b = 0.0f;
         float *dtemp;

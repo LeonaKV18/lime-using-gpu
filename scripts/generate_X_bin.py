@@ -15,18 +15,25 @@ import numpy as np
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
-def make_params(D):
+def load_model_npz(path):
+    """Loads x0 and means from a model .npz file produced by train_model.py."""
+    data = np.load(path, allow_pickle=True)
+    return data["x0"].astype(np.float32), data["means"].astype(np.float32)
+
+def make_params(D, model_path=None):
     """
-    Reproduce the deterministic arrays hard-coded in main.cu.
-      x0[i]    = 1.0 if i%5==0 else 0.5
-      means[i] = 0.5
+    Returns (x0, means) for perturbation generation.
+    When model_path is provided the values come from a trained model;
+    otherwise a synthetic fallback is used.
     """
+    if model_path is not None:
+        return load_model_npz(model_path)
     x0    = np.array([1.0 if i % 5 == 0 else 0.5 for i in range(D)], dtype=np.float32)
     means = np.full(D, 0.5, dtype=np.float32)
     return x0, means
 
 
-def generate_X(D, B, mask_prob=0.2, noise_std=0.1, seed=42):
+def generate_X(D, B, mask_prob=0.2, noise_std=0.1, seed=42, model_path=None):
     """
     CPU mirror of the generate_perturbations CUDA kernel.
 
@@ -47,7 +54,8 @@ def generate_X(D, B, mask_prob=0.2, noise_std=0.1, seed=42):
     -------
     X : np.ndarray, shape (B, D), dtype float32
     """
-    x0, means = make_params(D)
+    x0, means = make_params(D, model_path=model_path)
+    D = len(x0)
     rng   = np.random.default_rng(seed)
     u     = rng.random((B, D)).astype(np.float32)
     noise = rng.standard_normal((B, D)).astype(np.float32)
@@ -67,12 +75,18 @@ def main():
     parser.add_argument("--ns",   type=float, default=0.1,     help="Noise std dev")
     parser.add_argument("--seed", type=int,   default=42,      help="Random seed")
     parser.add_argument("--out",  type=str,   default="X.bin", help="Output file path")
+    parser.add_argument("--model",type=str,   default=None,    help="Model .npz from train_model.py; sets x0 and means")
     args = parser.parse_args()
 
     print(f"Generating X  D={args.D}  B={args.B}  mask_prob={args.mask}  "
           f"noise_std={args.ns}  seed={args.seed}")
+   
+    D = args.D
+    if args.model:
+        _md = np.load(args.model, allow_pickle=True)
+        D   = int(len(_md["x0"]))
 
-    X = generate_X(args.D, args.B, args.mask, args.ns, args.seed)
+    X = generate_X(D, args.B, args.mask, args.ns, args.seed, model_path=args.model)
 
     X.tofile(args.out)
     print(f"Saved {args.B} x {args.D} matrix  →  {args.out}")
