@@ -32,11 +32,19 @@ def plot_feature_importance(coeff, feature_names, top_k, out_path):
     """
     order = np.argsort(np.abs(coeff))[-top_k:]
     vals  = coeff[order]
-    names = (
-        [feature_names[i] for i in order]
-        if feature_names is not None
-        else [f"feature_{i}" for i in order]
-    )
+    if feature_names is not None:
+        names = []
+        for i in order:
+            name = feature_names[i]
+            if ' error' in name:
+                name = name.replace(' error', '') + ' [error]'
+            elif name.startswith('mean '):
+                name = name.replace('mean ', '') + ' [mean]'
+            elif name.startswith('worst '):
+                name = name.replace('worst ', '') + ' [worst]'
+            names.append(name)
+    else:
+        names = [f"feature_{i}" for i in order]
     colors = ["#d62728" if v < 0 else "#2ca02c" for v in vals]
 
     fig, ax = plt.subplots(figsize=(10, max(4, top_k * 0.38)))
@@ -101,6 +109,33 @@ def plot_ablation(coeff, feature_names, X, preds, weights, out_path, max_feature
     plt.close(fig)
     print(f"  Saved {out_path}")
 
+def save_attributions_csv(coeff, intercept, feature_names, r2, out_path):
+    """Save all feature attributions to CSV for analysis."""
+    import csv
+    with open(out_path, 'w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(['feature', 'group', 'coefficient', 'abs_coefficient', 'direction'])
+        for i, name in enumerate(feature_names):
+            if ' error' in name:
+                group = 'error'
+                base = name.replace(' error', '')
+            elif name.startswith('mean '):
+                group = 'mean'
+                base = name.replace('mean ', '')
+            elif name.startswith('worst '):
+                group = 'worst'
+                base = name.replace('worst ', '')
+            else:
+                group = 'other'
+                base = name
+            writer.writerow([
+                name, group, coeff[i], abs(coeff[i]), 
+                'positive' if coeff[i] > 0 else 'negative'
+            ])
+        writer.writerow([])
+        writer.writerow(['intercept', '', intercept, '', ''])
+        writer.writerow(['weighted_r2', '', r2, '', ''])
+    print(f"  Saved {out_path}")
 
 def main():
     parser = argparse.ArgumentParser(description="M2: explanation generation and validation")
@@ -146,6 +181,13 @@ def main():
         coeff, feature_names, min(args.top_k, D),
         os.path.join(args.out, "feature_importance.png"),
     )
+
+    if feature_names is not None:
+        save_attributions_csv(
+            coeff, intercept, feature_names, r2,
+            os.path.join(args.out, "attributions.csv")
+        )
+
     plot_loss_curve(
         loss_curve,
         os.path.join(args.out, "loss_curve.png"),

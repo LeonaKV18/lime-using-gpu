@@ -144,7 +144,7 @@ def main():
     coeff, intercept, loss_curve = train_surrogate(
         X, preds, weights, epochs=args.epochs, lr=args.lr
     )
-    print(f"Final loss: {loss_curve[-1]:.6f}")
+    print(f"Final loss: {loss_curve[-1]:.6e}")
 
     surr_preds = X @ coeff + intercept
     r2 = weighted_r2(preds, surr_preds, weights)
