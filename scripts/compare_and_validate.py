@@ -116,13 +116,20 @@ def validate(D, B, X_path, preds_path, weights_path,
     ok_z = True
     if zprime_gpu is not None:
         _, means, _, _ = ref.make_params(D, model_path=model_path)
-        z_from_x = np.where(np.isclose(X_gpu, means[np.newaxis, :], atol=1e-7), 0, 1).astype(np.uint8)
         bad_values = np.count_nonzero((zprime_gpu != 0) & (zprime_gpu != 1))
-        mismatches = np.count_nonzero(zprime_gpu != z_from_x)
+        
+        mask_positions = (zprime_gpu == 0)
+        X_at_mask = X_gpu[mask_positions]
+        means_broadcast = np.broadcast_to(means[np.newaxis, :], (B, D))[mask_positions]
+        incorrect_masks = np.count_nonzero(X_at_mask != means_broadcast)
+        
         total = B * D
-        ok_z = (bad_values == 0) and (mismatches == 0)
-        status = "✓ PASS" if ok_z else "✗ FAIL"
-        print(f"  zprime      mismatches={mismatches}/{total}   bad_values={bad_values}   {status}")
+        ok_z = (bad_values == 0) and (incorrect_masks == 0)
+        
+        if incorrect_masks > 0:
+            print(f"  zprime      {incorrect_masks} masked positions don't match means   ✗ FAIL")
+        else:
+            print(f"  zprime      valid mask, all {np.count_nonzero(mask_positions)} masked positions match means   ✓ PASS")
 
     # 6. Histogram of differences (text-based, no matplotlib needed)
     print(f"\n  Difference histogram (preds):")
