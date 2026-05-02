@@ -4,3 +4,6 @@
 # Local runtime outputs
 /preds.bin
 /weights.bin
+/plots
+/models
+scripts/__pycache__
