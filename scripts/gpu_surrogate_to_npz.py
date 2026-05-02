@@ -6,6 +6,10 @@ NPZ format used by surrogate_train.py (M2).  This makes the existing
 explain_instance.py plotting script work with M3 outputs without any
 modification.
 
+main_m3.cu uses double-precision for numerical stability and falls 
+back to GD if Cholesky fails. The solver_id in the output reflects 
+the final solver used (0=cholesky success, 1=gd fallback or direct GD).
+
 Binary layout (see save_attributions in src/main_m3.cu):
     int32    D
     int32    solver_id        0 = cholesky, 1 = gd

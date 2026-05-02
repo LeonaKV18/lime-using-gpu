@@ -9,7 +9,7 @@ REM    3. Run lime_m3   - end-to-end GPU LIME (Gradient Descent)
 REM    4. CPU NumPy surrogate (Cholesky)        for cross-validation
 REM    5. M2 PyTorch surrogate                  for cross-validation
 REM    6. Compare all four (GPU/Cholesky, GPU/GD, CPU, M2)
-REM    7. Generate plots reusing explain_instance.py
+REM    7. Generate plots using explain_instance.py
 REM ======================================================
 setlocal enabledelayedexpansion
 
@@ -61,7 +61,9 @@ if not exist "%EXE_M3%" (
 )
 "%EXE_M3%" --B=%B% --model="%MODEL_BIN%" ^
     --solver=cholesky --ridge=%RIDGE% ^
-    --write-X "%XBIN%" --write-preds "%PBIN%" --write-weights "%WBIN%" ^
+    --write-X "%XBIN%" ^
+    --write-preds "%PBIN%" ^
+    --write-weights "%WBIN%" ^
     --write-attributions "%ATTR_GPU_BIN%"
 
 python "%ROOT%scripts\gpu_surrogate_to_npz.py" ^
@@ -72,6 +74,9 @@ echo  Step 3: GPU LIME end-to-end (Gradient Descent)
 echo ========================================
 "%EXE_M3%" --B=%B% --model="%MODEL_BIN%" ^
     --solver=gd --ridge=%RIDGE% --gd-iters=500 --gd-lr=0.01 ^
+    --write-X "%XBIN%" ^
+    --write-preds "%PBIN%" ^
+    --write-weights "%WBIN%" ^
     --write-attributions "%ATTR_GPU_GD_BIN%"
 
 python "%ROOT%scripts\gpu_surrogate_to_npz.py" ^
@@ -122,7 +127,7 @@ python "%ROOT%scripts\explain_instance.py" ^
 
 echo ========================================
 echo  Done.
-echo    GPU Cholesky attribs : %ATTR_GPU_NPZ%
+echo    GPU (Double-Precision) Cholesky attribs : %ATTR_GPU_NPZ%
 echo    GPU GD       attribs : %ATTR_GPU_GD_NPZ%
 echo    CPU NumPy    attribs : %ATTR_CPU_NPZ%
 echo    M2 PyTorch   attribs : %ATTR_M2_NPZ%
